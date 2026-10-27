@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RelayRoom: Four Devices, One Room</title>
+  <meta
+    name="description"
+    content="A synchronous multi device communication relay, simulated end to end in one static page. No server, no network, every event in order."
+  />
+  <meta name="color-scheme" content="dark" />
+  <meta name="theme-color" content="#0b1214" />
+  <meta property="og:title" content="RelayRoom: Four Devices, One Room" />
+  <meta property="og:description" content="A synchronous multi device communication relay, simulated end to end in one static page. No server, no network, every event in order." />
+  <meta property="og:type" content="website" />
+  <meta name="twitter:card" content="summary" />
+  <link
+    rel="icon"
+    href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b1214'/%3E%3Ccircle cx='9' cy='16' r='4' fill='none' stroke='%23f2b441' stroke-width='2'/%3E%3Ccircle cx='23' cy='9' r='3' fill='none' stroke='%2356c4cc' stroke-width='2'/%3E%3Ccircle cx='23' cy='23' r='3' fill='none' stroke='%237fc98b' stroke-width='2'/%3E%3Cpath d='M13 14.5 20 10M13 17.5 20 22' stroke='%239fb5ae' stroke-width='2'/%3E%3C/svg%3E"
+  />
+  <link rel="stylesheet" href="styles.css" />
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip To Content</a>
+  <noscript><p role="status" style="margin:0;padding:12px 20px;background:#f2b441;color:#0b1214;font-weight:700;text-align:center;">RelayRoom simulates four virtual devices and a deterministic relay log in JavaScript. Turn on JavaScript to run the room.</p></noscript>
+
+  <header class="masthead">
+    <div class="brand">
+      <svg class="brand-mark" viewBox="0 0 24 24" width="30" height="30" aria-hidden="true" focusable="false">
+        <circle cx="4.6" cy="12" r="2.4" fill="none" stroke="currentColor" stroke-width="1.5" />
+        <circle cx="19.4" cy="6.4" r="2" fill="none" stroke="currentColor" stroke-width="1.5" />
+        <circle cx="19.4" cy="17.6" r="2" fill="none" stroke="currentColor" stroke-width="1.5" />
+        <path d="M6.9 10.9 17.5 6.9M6.9 13.1 17.5 17.1" fill="none" stroke="currentColor" stroke-width="1.5" />
+      </svg>
+      <div class="brand-copy">
+        <h1>RelayRoom</h1>
+        <p class="brand-line">Four devices, one room, every message in order.</p>
+      </div>
+      <span class="sim-badge">Local Simulation</span>
+    </div>
+
+    <div class="room-code">
+      <span class="room-code-label" id="room-code-label">Room Code</span>
+      <div class="code-row">
+        <div class="code-tiles" id="code-tiles" role="img" aria-labelledby="room-code-label"></div>
+        <button class="btn btn-quiet" id="btn-new-code" type="button">New Code</button>
+      </div>
+    </div>
+
+    <div class="transport">
+      <div class="transport-row">
+        <button class="btn btn-primary" id="btn-run" type="button">Pause</button>
+        <label class="speed-label" for="speed">Speed</label>
+        <select class="select" id="speed" name="speed">
+          <option value="1" selected>1x</option>
+          <option value="2">2x</option>
+          <option value="4">4x</option>
+        </select>
+        <button class="btn" id="btn-reset" type="button">Reset</button>
+      </div>
+      <p class="sim-status" id="sim-status" role="status">Starting the room.</p>
+    </div>
+  </header>
+
+  <main id="main">
+    <div class="stage">
+      <section class="zone zone-clients" aria-labelledby="clients-title">
+        <h2 id="clients-title">Virtual Client Grid</h2>
+        <p class="zone-line">
+          Four simulated devices share the room on a three second heartbeat. Stall one and watch the
+          sweep evict it after ten seconds of silence.
+        </p>
+        <div class="device-grid" id="device-grid"></div>
+      </section>
+
+      <section class="zone zone-stream" aria-labelledby="stream-title">
+        <div class="zone-head">
+          <h2 id="stream-title">Relay Stream</h2>
+          <div class="filters" role="group" aria-label="Stream filters">
+            <button class="chip" id="filter-messages" type="button" aria-pressed="true">Messages</button>
+            <button class="chip" id="filter-system" type="button" aria-pressed="true">Joins And Leaves</button>
+            <button class="chip" id="filter-heartbeats" type="button" aria-pressed="false">Heartbeats</button>
+            <button class="chip" id="btn-follow" type="button" aria-pressed="true">Follow</button>
+          </div>
+        </div>
+        <p class="zone-line">
+          An append only log. Every event takes the next sequence number, and the four cells show
+          which lanes held it.
+        </p>
+        <div class="stream-scroll" id="stream-scroll" tabindex="0" aria-label="Relay event stream, newest at the bottom">
+          <ol class="stream" id="stream-list" aria-live="off"></ol>
+        </div>
+      </section>
+    </div>
+
+    <section class="zone zone-lab" aria-labelledby="lab-title">
+      <h2 id="lab-title">Message Lab</h2>
+      <p class="zone-line">
+        Compose a script against its own room, then run it one step at a time and read exactly why
+        each event was accepted, rejected or swept.
+      </p>
+      <div class="lab-grid">
+        <div class="lab-pane">
+          <div class="pane-head">
+            <h3>Script</h3>
+            <div class="preset-row" role="group" aria-label="Preset scripts">
+              <button class="btn btn-small" id="btn-preset-ordering" type="button">Ordering Preset</button>
+              <button class="btn btn-small" id="btn-preset-eviction" type="button">Eviction Preset</button>
+              <button class="btn btn-small" id="btn-preset-replay" type="button">Replay Preset</button>
+            </div>
+          </div>
+          <ol class="lab-steps" id="lab-steps"></ol>
+          <div class="lab-actions">
+            <button class="btn" id="btn-add-step" type="button">Add Step</button>
+            <button class="btn" id="btn-step-one" type="button">Run One Step</button>
+            <button class="btn btn-primary" id="btn-run-all" type="button">Run All Steps</button>
+            <button class="btn" id="btn-lab-reset" type="button">Reset Lab</button>
+          </div>
+        </div>
+        <div class="lab-pane">
+          <div class="pane-head">
+            <h3>Decision Trace</h3>
+            <p class="lab-status" id="lab-status" role="status">The lab room is fresh.</p>
+          </div>
+          <ol class="lab-trace" id="lab-trace" aria-label="Step by step decision trace"></ol>
+          <div class="pane-head pane-head-split">
+            <h3>Lab Stream</h3>
+            <span class="lab-code" id="lab-code" aria-label="Lab room code"></span>
+          </div>
+          <ol class="lab-stream" id="lab-stream" aria-label="Lab event stream"></ol>
+        </div>
+      </div>
+    </section>
+
+    <section class="zone zone-validator" aria-labelledby="validator-title">
+      <h2 id="validator-title">Code Validator</h2>
+      <p class="zone-line">
+        A room code is six characters from a 31 character alphabet with the lookalikes removed. The
+        sixth character is a checksum digit computed from the first five.
+      </p>
+      <div class="validator-grid">
+        <div class="validator-live">
+          <label class="field-label" for="validator-input">Try A Code</label>
+          <input
+            class="input"
+            id="validator-input"
+            name="validator-input"
+            type="text"
+            autocomplete="off"
+            autocapitalize="characters"
+            spellcheck="false"
+            maxlength="12"
+            placeholder="AB2CD9"
+            aria-describedby="verdict"
+          />
+          <p class="verdict" id="verdict" role="status">Type a six character code.</p>
+          <dl class="checks">
+            <div class="check" id="check-format" data-state="idle">
+              <dt>Format</dt>
+              <dd>Six characters.</dd>
+            </div>
+            <div class="check" id="check-charset" data-state="idle">
+              <dt>Charset</dt>
+              <dd>From the 31 character alphabet.</dd>
+            </div>
+            <div class="check" id="check-checksum" data-state="idle">
+              <dt>Checksum</dt>
+              <dd>The sixth character matches the weighted sum.</dd>
+            </div>
+          </dl>
+        </div>
+        <div class="validator-sweep">
+          <h3>The 1,000 Code Sweep</h3>
+          <p>
+            Runs the same checks the test suite runs: 1,000 generated codes validated and
+            deduplicated, then 6,000 single character mutations thrown at them.
+          </p>
+          <button class="btn btn-primary" id="btn-sweep" type="button">Run The Sweep</button>
+          <dl class="sweep-results" id="sweep-results" aria-live="polite">
+            <div><dt>Generated</dt><dd data-stat="generated">0</dd></div>
+            <div><dt>Valid</dt><dd data-stat="valid">0</dd></div>
+            <div><dt>Unique</dt><dd data-stat="unique">0</dd></div>
+            <div><dt>Mutations Rejected</dt><dd data-stat="mutations">0</dd></div>
+            <div><dt>Time</dt><dd data-stat="time">0 ms</dd></div>
+          </dl>
+        </div>
+      </div>
+    </section>
+
+    <section class="zone zone-engine" aria-labelledby="engine-title">
+      <h2 id="engine-title">How The Engine Works</h2>
+      <p class="zone-line">
+        The room core is a deterministic event log. It has no timers and no network: time only
+        moves when a clock advances it, so the same script always produces the same log.
+      </p>
+      <div class="engine-grid">
+        <article class="engine-card">
+          <h3>Strict Ordering</h3>
+          <p>
+            Every event takes the next sequence number, one higher than the last. Messages from all
+            four devices interleave into a single ordered stream, and each sender keeps its own
+            counter on top.
+          </p>
+        </article>
+        <article class="engine-card">
+          <h3>Heartbeats</h3>
+          <p>
+            Each device pings the room every three seconds. A ping is an event like any other, with
+            its own place in the log and its own sequence number.
+          </p>
+        </article>
+        <article class="engine-card">
+          <h3>Stale Eviction</h3>
+          <p>
+            A device silent for more than ten seconds is swept out with a leave event that records
+            how long it went quiet. It can rejoin later and starts a fresh sender sequence.
+          </p>
+        </article>
+        <article class="engine-card">
+          <h3>Replay Windows</h3>
+          <p>
+            A rejoining device asks for everything after a sequence it already holds. The engine
+            hands back that exact window of the log, copies, in order.
+          </p>
+        </article>
+      </div>
+      <p class="transport-note">
+        About transport: this build has no server. The engine, the log and the scheduler all run in
+        this page, which is why the badge above says Local Simulation. When a backend exists, a
+        WebSocket transport is the drop in replacement for the in page scheduler: it would call the
+        same engine methods and append to the same log.
+      </p>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <p>
+      RelayRoom was built by Aariv Patel as a hackathon pre-build. It is a simulation: every device
+      on this page is software, no server is involved, and no data leaves the tab.
+    </p>
+    <p><a href="LICENSE">MIT License</a></p>
+  </footer>
+</body>
+</html>

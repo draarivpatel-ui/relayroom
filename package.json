@@ -1,0 +1,12 @@
+{
+  "name": "relayroom",
+  "version": "0.1.0",
+  "description": "A synchronous multi device communication relay environment, simulated end to end in one static page.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  },
+  "author": "Aariv Patel",
+  "license": "MIT"
+}
