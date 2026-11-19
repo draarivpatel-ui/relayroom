@@ -216,10 +216,6 @@ export class RelayEngine {
     return this.log.filter((event) => event.seq > fromSeq).map((event) => ({ ...event }));
   }
 
-  clientView() {
-    return [...this.clients.values()].map((client) => ({ ...client }));
-  }
-
   stats() {
     const counts = { join: 0, leave: 0, send: 0, heartbeat: 0 };
     for (const event of this.log) {
