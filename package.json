@@ -5,7 +5,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "test": "node --test"
+    "test": "node --experimental-vm-modules --test"
   },
   "author": "Aariv Patel",
   "license": "MIT"

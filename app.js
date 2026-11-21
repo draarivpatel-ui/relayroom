@@ -19,10 +19,22 @@ import {
   validateRoomCode
 } from "./engine.js";
 
+import {
+  auditLog,
+  trafficReport,
+  threadReport,
+  evictionReport,
+  scriptCoverage,
+  codeStrength,
+  buildAnalyticsReport
+} from "./analytics.js";
+
 const $ = (id) => document.getElementById(id);
 
 const LANE_IDS = LAB_CLIENTS.map((client) => client.id);
-const NAMES = Object.fromEntries(LAB_CLIENTS.map((client) => [client.id, client.label]));
+// A Map, not a plain object: a client id like "__proto__" must never resolve
+// to an inherited Object.prototype member.
+const NAMES = new Map(LAB_CLIENTS.map((client) => [client.id, client.label]));
 const TYPE_LABELS = { send: "Send", join: "Join", leave: "Leave", heartbeat: "Ping" };
 const MAX_STREAM_ROWS = 220;
 
@@ -148,7 +160,7 @@ function buildEventRow(event) {
 
   const lane = document.createElement("span");
   lane.className = "event-lane";
-  lane.textContent = event.clientId ? NAMES[event.clientId] ?? event.clientId : "Room";
+  lane.textContent = event.clientId ? NAMES.get(event.clientId) ?? event.clientId : "Room";
 
   const type = document.createElement("span");
   type.className = "event-type";
@@ -156,7 +168,7 @@ function buildEventRow(event) {
 
   const content = document.createElement("div");
   content.className = "event-content";
-  if (event.clientId) content.dataset.laneName = NAMES[event.clientId] ?? event.clientId;
+  if (event.clientId) content.dataset.laneName = NAMES.get(event.clientId) ?? event.clientId;
 
   const appendMeta = (text) => {
     const meta = document.createElement("span");
@@ -178,10 +190,11 @@ function buildEventRow(event) {
     content.append(`${event.label} joined as ${event.device}.`);
     appendMeta(`${event.members.length} lanes present before.`);
   } else if (event.type === "leave") {
+    const who = event.label ?? NAMES.get(event.clientId) ?? event.clientId ?? "A device";
     if (event.reason === "stale") {
-      content.append(`${event.label ?? NAMES[event.clientId]} went silent for ${fmtMs(event.silentForMs)}.`);
+      content.append(`${who} went silent for ${fmtMs(event.silentForMs)}.`);
     } else {
-      content.append(`${event.label ?? NAMES[event.clientId]} left the room.`);
+      content.append(`${who} left the room.`);
     }
     appendMeta(`reason: ${event.reason}`);
   } else {
@@ -278,7 +291,10 @@ function advanceChunk(chunk) {
   const due = [];
   for (const device of sim.devices) {
     if (!device.present) continue;
-    if (!device.stalled && device.nextBeat <= t1) {
+    // A stalled device goes fully quiet: no pings, no notes, no queued
+    // replies. Anything less and it could not honestly go silent for the sweep.
+    if (device.stalled) continue;
+    if (device.nextBeat <= t1) {
       due.push({ t: device.nextBeat, device, kind: "beat" });
     }
     if (device.nextSend <= t1) {
@@ -344,7 +360,7 @@ function scheduleReactions(event) {
   // acknowledgements and replies never trigger further reactions.
   if (event.kind !== "note") return;
   for (const other of sim.devices) {
-    if (other.id === event.clientId || !other.present) continue;
+    if (other.id === event.clientId || !other.present || other.stalled) continue;
     if (!event.members.includes(other.id)) continue;
     other.received += 1;
     if (other.pending.length >= 4) continue;
@@ -415,7 +431,7 @@ function updateStatus() {
   const sends = sim.engine.stats().counts.send;
   const parts = [
     sim.running ? "Running" : "Paused",
-    `${present} of 4 devices active`,
+    `${present} of ${sim.devices.length} devices active`,
     `${sends} messages relayed`
   ];
   if (sim.evictionNote && sim.engine.time - sim.evictionAt < 12000) parts.push(sim.evictionNote);
@@ -654,6 +670,10 @@ function renderLabSteps() {
     remove.setAttribute("aria-label", `Remove step ${index + 1}`);
     remove.addEventListener("click", () => {
       lab.steps.splice(index, 1);
+      // Removing a step at or before the cursor must not silently skip the
+      // step that slides into its place on the next run.
+      if (index < lab.cursor) lab.cursor -= 1;
+      if (lab.cursor > lab.steps.length) lab.cursor = lab.steps.length;
       renderLabSteps();
     });
 
@@ -663,7 +683,7 @@ function renderLabSteps() {
 }
 
 function clientLabel(id) {
-  return NAMES[id] ?? id;
+  return NAMES.get(id) ?? id;
 }
 
 function explainTrace(entry) {
@@ -728,8 +748,15 @@ function appendLabEvents() {
   stream.scrollTop = stream.scrollHeight;
 }
 
-function runLabSteps(steps, label) {
+function runLabSteps(steps, label, stepOffset = 0) {
   const result = runScript(lab.engine, steps);
+  // runScript numbers steps from one within its own batch; shift them back to
+  // absolute script positions so the trace quotes the numbers the list shows.
+  if (stepOffset > 0) {
+    for (let i = 0; i < result.trace.length; i += 1) {
+      result.trace[i].step = stepOffset + i + 1;
+    }
+  }
   appendLabTrace(result.trace);
   appendLabEvents();
   const accepted = result.trace.filter((entry) => entry.ok).length;
@@ -824,6 +851,131 @@ function runSweep() {
   button.disabled = false;
 }
 
+/* Room Analytics ---------------------------------------------------- */
+
+const PRESET_SCRIPTS = {
+  ordering: LAB_PRESETS.ordering,
+  eviction: LAB_PRESETS.eviction,
+  replay: LAB_PRESETS.replay
+};
+
+function presetLog(name) {
+  const engine = new RelayEngine({ roomCode: generateRoomCode(createRng(4242)) });
+  runScript(engine, PRESET_SCRIPTS[name]);
+  return engine.log;
+}
+
+function analyticsLog(source) {
+  if (!Object.prototype.hasOwnProperty.call(PRESET_SCRIPTS, source)) {
+    return sim.engine ? sim.engine.log.slice() : [];
+  }
+  return presetLog(source);
+}
+
+function analyticsTableBody(id, rows) {
+  const host = $(id);
+  if (!host) return;
+  host.replaceChildren();
+  for (const [label, value] of rows) {
+    const tr = document.createElement("tr");
+    const left = document.createElement("td");
+    left.textContent = String(label);
+    const right = document.createElement("td");
+    right.textContent = String(value);
+    tr.append(left, right);
+    host.appendChild(tr);
+  }
+}
+
+function renderAnalytics() {
+  const rawSource = $("analytics-source")?.value ?? "";
+  const source = Object.prototype.hasOwnProperty.call(PRESET_SCRIPTS, rawSource) ? rawSource : "live";
+  const rawSample = Number($("analytics-sample")?.value);
+  const sample = Number.isFinite(rawSample) && rawSample > 0 ? rawSample : 1000;
+  const log = analyticsLog(source);
+  const script = source === "live" ? null : PRESET_SCRIPTS[source];
+  const report = buildAnalyticsReport(log, { script, audit: { strictMembership: false } });
+  const strength = codeStrength(sample);
+
+  const sampleOut = $("analytics-sample-out");
+  if (sampleOut) sampleOut.textContent = String(sample);
+
+  $("analytics-summary").textContent =
+    `${report.eventCount} events audited, ${report.valid ? "no integrity violations" : report.audit.violationCount + " violations"}, ` +
+    `${report.traffic.counts.send} sends, ${report.threads.threads.length} reply threads, ` +
+    `${report.evictions.evictionCount} stale evictions, code detection ${strength.detectionFraction}.`;
+
+  $("analytics-integrity").textContent = report.valid
+    ? "Sequence order, clock, sender counters and membership all pass."
+    : `${report.audit.violationCount} violations found in the log.`;
+  analyticsTableBody("analytics-integrity-body", [
+    ["Events", report.audit.eventCount],
+    ["Last sequence", report.audit.lastSeq],
+    ["Violations", report.audit.violationCount],
+    ["Time span (ms)", report.audit.timeSpanMs],
+    ["Events per second", report.density],
+    ["Valid", report.valid ? "yes" : "no"]
+  ]);
+
+  $("analytics-traffic").textContent =
+    `${report.traffic.clients.length} devices, ${report.traffic.totalBytes} message bytes, ` +
+    `mean heartbeat gap ${report.traffic.heartbeatGaps.meanMs} ms, max ${report.traffic.heartbeatGaps.maxMs} ms.`;
+  const trafficHost = $("analytics-traffic-body");
+  if (trafficHost) {
+    trafficHost.replaceChildren();
+    for (const row of report.traffic.clients) {
+      const tr = document.createElement("tr");
+      for (const value of [row.clientId, row.sends, row.heartbeats, row.bytes]) {
+        const td = document.createElement("td");
+        td.textContent = String(value);
+        tr.appendChild(td);
+      }
+      trafficHost.appendChild(tr);
+    }
+    if (report.traffic.clients.length === 0) {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.colSpan = 4;
+      td.textContent = "No events yet.";
+      tr.appendChild(td);
+      trafficHost.appendChild(tr);
+    }
+  }
+
+  $("analytics-threads").textContent =
+    `${report.threads.sendCount} sends, ${report.threads.rootCount} roots, ` +
+    `${report.threads.replyCount} replies, ${report.threads.orphanCount} orphans, ` +
+    `deepest thread ${report.threads.maxDepth} levels.`;
+  analyticsTableBody("analytics-threads-body", [
+    ["Send events", report.threads.sendCount],
+    ["Root threads", report.threads.rootCount],
+    ["Replies", report.threads.replyCount],
+    ["Orphan replies", report.threads.orphanCount],
+    ["Largest thread", report.threads.largestThread ? report.threads.largestThread.size : 0],
+    ["Max depth", report.threads.maxDepth],
+    ["Stale evictions", report.evictions.evictionCount],
+    ["Mean silent (ms)", report.evictions.meanSilentForMs]
+  ]);
+
+  const coverage = report.script;
+  $("analytics-strength").textContent =
+    `${strength.sampleSize} codes over a ${strength.baseSpaceApprox} base space, ` +
+    `${strength.rejectedMutations} of ${strength.mutationCount} single character mutations rejected.`;
+  analyticsTableBody("analytics-strength-body", [
+    ["Sample size", strength.sampleSize],
+    ["Unique codes", strength.uniqueCount],
+    ["Valid codes", strength.validCount],
+    ["Alphabet size", strength.alphabetSize],
+    ["Base space", strength.baseSpaceApprox],
+    ["Mutations rejected", `${strength.rejectedMutations} / ${strength.mutationCount}`],
+    ["Detection fraction", strength.detectionFraction],
+    ["Script steps", coverage ? coverage.stepCount : "live room"],
+    ["Ops covered", coverage ? `${coverage.coveredDimensions} / ${coverage.totalDimensions}` : "n/a"],
+    ["Coverage fraction", coverage ? coverage.coverageFraction : "n/a"],
+    ["Replay exercised", coverage ? (coverage.exercisesReplay ? "yes" : "no") : "n/a"]
+  ]);
+}
+
 /* Wiring */
 
 function wire() {
@@ -882,7 +1034,7 @@ function wire() {
       $("lab-status").textContent = "No steps left. Add a step or load a preset.";
       return;
     }
-    runLabSteps([lab.steps[lab.cursor]], "one");
+    runLabSteps([lab.steps[lab.cursor]], "one", lab.cursor);
     lab.cursor += 1;
   });
 
@@ -891,7 +1043,7 @@ function wire() {
       $("lab-status").textContent = "Every step has run. Reset the lab to go again.";
       return;
     }
-    runLabSteps(lab.steps.slice(lab.cursor), "all");
+    runLabSteps(lab.steps.slice(lab.cursor), "all", lab.cursor);
     lab.cursor = lab.steps.length;
   });
 
@@ -905,6 +1057,11 @@ function wire() {
 
   validatorInput.addEventListener("input", updateValidator);
   $("btn-sweep").addEventListener("click", runSweep);
+
+  $("btn-analytics-refresh").addEventListener("click", renderAnalytics);
+  $("analytics-source").addEventListener("change", renderAnalytics);
+  $("analytics-sample").addEventListener("input", renderAnalytics);
+  $("analytics-sample").addEventListener("change", renderAnalytics);
 
   document.addEventListener("visibilitychange", () => {
     sim.lastReal = performance.now();
@@ -920,4 +1077,17 @@ resetSim();
 labInit();
 updateValidator();
 wire();
-setInterval(stepFrame, 100);
+renderAnalytics();
+let analyticsTick = 0;
+const originalStepFrame = stepFrame;
+setInterval(() => {
+  originalStepFrame();
+  analyticsTick += 1;
+  // Refresh the live report about twice a second, and only when the live log
+  // is the selected source, so a preset report stays stable while being read.
+  const tickSource = $("analytics-source")?.value ?? "";
+  if (analyticsTick >= 5 && !Object.prototype.hasOwnProperty.call(PRESET_SCRIPTS, tickSource)) {
+    analyticsTick = 0;
+    renderAnalytics();
+  }
+}, 100);

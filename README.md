@@ -47,11 +47,10 @@ deployable on GitHub Pages as is.
 ## Run The Tests
 
 ```bash
-node --test
+npm test
 ```
 
-77 tests pass in under 90 ms, with no network and no installs (built on Node 26, needs Node 18 or
-newer). They cover:
+The `node:test` suite passes with no network and no installs (using `node --experimental-vm-modules --test`). It covers:
 
 - the 1,000 room code validation sweep, a 5,000 code collision sample checked against the birthday
   bound, and 6,000 single character mutations all rejected
@@ -59,8 +58,9 @@ newer). They cover:
   interleaving
 - heartbeats, stale eviction at the ten second ttl, and rejoin behavior
 - replay windows, copy safety, and determinism: identical scripted runs produce identical logs
+- log integrity auditing, traffic telemetry, reply thread reconstruction, eviction reporting, and script coverage (`tests/analytics.test.js`)
 - the three Message Lab preset scripts, the exact scripts the UI ships
-- DOM structure, metadata, CSS hygiene, and interactive DOM execution (`tests/dom-smoke.test.js`)
+- DOM structure, metadata, CSS hygiene, and interactive DOM/analytics execution (`tests/dom-smoke.test.js`, `tests/analytics-dom.test.js`)
 
 ## Design Notes
 
@@ -77,11 +77,12 @@ newer). They cover:
 
 | File | Purpose |
 | --- | --- |
-| `index.html` | The whole app: grid, stream, lab and validator |
+| `index.html` | The whole app: grid, stream, lab, validator and analytics panel |
 | `styles.css` | Palette, type and layout |
-| `app.js` | Page local scheduler, four virtual clients, lab and validator wiring |
+| `app.js` | Page local scheduler, four virtual clients, lab, validator and analytics wiring |
 | `engine.js` | The Room Core: codes, RelayEngine, script runner, presets |
-| `tests/` | node:test suite: room codes, engine, lab, and DOM smoke tests |
+| `analytics.js` | Pure log auditor, traffic telemetry, thread reconstruction, eviction and coverage reports |
+| `tests/` | `node:test` suite: room codes, engine, analytics, lab, and DOM/UI tests |
 
 ## License
 

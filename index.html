@@ -10,6 +10,10 @@
   />
   <meta name="color-scheme" content="dark" />
   <meta name="theme-color" content="#0b1214" />
+  <meta
+    http-equiv="Content-Security-Policy"
+    content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
+  />
   <meta property="og:title" content="RelayRoom: Four Devices, One Room" />
   <meta property="og:description" content="A synchronous multi device communication relay, simulated end to end in one static page. No server, no network, every event in order." />
   <meta property="og:type" content="website" />
@@ -35,7 +39,6 @@
       </svg>
       <div class="brand-copy">
         <h1>RelayRoom</h1>
-        <p class="brand-line">Four devices, one room, every message in order.</p>
       </div>
       <span class="sim-badge">Local Simulation</span>
     </div>
@@ -185,6 +188,78 @@
             <div><dt>Time</dt><dd data-stat="time">0 ms</dd></div>
           </dl>
         </div>
+      </div>
+    </section>
+
+    <section class="zone zone-analytics" aria-labelledby="analytics-title">
+      <h2 id="analytics-title">Room Analytics</h2>
+      <p class="zone-line">
+        A live audit of the relay log: sequence integrity, per device traffic, reply threads,
+        eviction timelines and script coverage. Everything below is computed from the log you can
+        watch build above, plus a deterministic sample of generated room codes.
+      </p>
+      <div class="analytics-controls">
+        <div class="control-field">
+          <label for="analytics-source">Log source</label>
+          <select class="select" id="analytics-source">
+            <option value="live" selected>Live Room</option>
+            <option value="ordering">Ordering Preset</option>
+            <option value="eviction">Eviction Preset</option>
+            <option value="replay">Replay Preset</option>
+          </select>
+        </div>
+        <div class="control-field">
+          <label for="analytics-sample">Code sample <span class="mono" id="analytics-sample-out">1000</span></label>
+          <input id="analytics-sample" type="range" min="100" max="5000" step="100" value="1000" aria-describedby="analytics-sample-out">
+        </div>
+        <button class="btn" id="btn-analytics-refresh" type="button">Recompute Report</button>
+      </div>
+      <p class="readout-line mono" id="analytics-summary" role="status"></p>
+      <div class="analytics-grid">
+        <article class="analytics-card">
+          <h3>Log integrity</h3>
+          <p class="analytics-lead" id="analytics-integrity"></p>
+          <div class="table-scroll">
+            <table class="analytics-table">
+              <caption>Sequence, clock, sender counter and membership checks</caption>
+              <thead><tr><th scope="col">Check</th><th scope="col">Result</th></tr></thead>
+              <tbody id="analytics-integrity-body"></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="analytics-card">
+          <h3>Traffic by device</h3>
+          <p class="analytics-lead" id="analytics-traffic"></p>
+          <div class="table-scroll">
+            <table class="analytics-table">
+              <caption>Joins, leaves, sends and heartbeats per client</caption>
+              <thead><tr><th scope="col">Device</th><th scope="col">Sends</th><th scope="col">Pings</th><th scope="col">Bytes</th></tr></thead>
+              <tbody id="analytics-traffic-body"></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="analytics-card">
+          <h3>Reply threads and evictions</h3>
+          <p class="analytics-lead" id="analytics-threads"></p>
+          <div class="table-scroll">
+            <table class="analytics-table">
+              <caption>Reconstructed threads and stale client sweeps</caption>
+              <thead><tr><th scope="col">Metric</th><th scope="col">Value</th></tr></thead>
+              <tbody id="analytics-threads-body"></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="analytics-card">
+          <h3>Code strength and script coverage</h3>
+          <p class="analytics-lead" id="analytics-strength"></p>
+          <div class="table-scroll">
+            <table class="analytics-table">
+              <caption>Checksum detection rate and script operation coverage</caption>
+              <thead><tr><th scope="col">Metric</th><th scope="col">Value</th></tr></thead>
+              <tbody id="analytics-strength-body"></tbody>
+            </table>
+          </div>
+        </article>
       </div>
     </section>
 

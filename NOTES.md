@@ -23,8 +23,10 @@ Nothing has been pushed anywhere; the repo waits at
   replay window. Presets for Ordering, Eviction and Replay.
 - The Code Validator: live validation (format, charset, checksum) as you type, plus an in browser
   1,000 code sweep that mirrors the test suite checks and reports counts and duration.
-- `tests/`: 77 node:test tests across four files (`room-codes.test.js`, `engine.test.js`,
-  `lab.test.js`, and `dom-smoke.test.js`). No installs and no network; run with `node --test`.
+- `tests/`: 180 node:test tests across seven files (`room-codes.test.js`, `engine.test.js`,
+  `lab.test.js`, `dom-smoke.test.js`, `analytics.test.js`, `analytics-dom.test.js`, and
+  `hardening.test.js`, plus the shared `tests/helpers/dom.js` shim). No installs and no
+  network; run with `node --test`.
 - `README.md` (features limited to what works, transport honestly described as simulated with the
   WebSocket layer as the future drop in) and `LICENSE` (MIT).
 
@@ -32,10 +34,8 @@ Nothing has been pushed anywhere; the repo waits at
 
 `node --test` on Node v26.8.1:
 
-- tests: **77**, pass: **77**, fail: **0**, cancelled: **0**, skipped: **0**, todo: **0**
-- duration: about **65 to 80 ms** on this machine
-- per file: `tests/room-codes.test.js` 25 tests, `tests/engine.test.js` 30 tests,
-  `tests/lab.test.js` 12 tests, `tests/dom-smoke.test.js` 10 tests
+- tests: **180**, pass: **180**, fail: **0**, cancelled: **0**, skipped: **0**, todo: **0**
+- duration: about **200 to 300 ms** on this machine
 - inside those tests, loops run far more checks than the named count: the 1,000 code validation
   sweep asserts per code, the mutation sweep tries all 6,000 single character mutations of 1,000
   codes, and a 5,000 code sample is checked against the birthday collision bound

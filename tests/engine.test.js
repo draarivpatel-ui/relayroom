@@ -118,10 +118,11 @@ test("interleaved senders preserve strict global order", () => {
 test("message text, kind and reply target are preserved", () => {
   const engine = freshEngine();
   engine.join("orchid");
-  const result = engine.send("orchid", "About seq 3", { kind: "reply", replyTo: 3 });
-  assert.equal(result.event.text, "About seq 3");
+  const root = engine.send("orchid", "root note");
+  const result = engine.send("orchid", "About seq " + root.event.seq, { kind: "reply", replyTo: root.event.seq });
+  assert.equal(result.event.text, "About seq " + root.event.seq);
   assert.equal(result.event.kind, "reply");
-  assert.equal(result.event.replyTo, 3);
+  assert.equal(result.event.replyTo, root.event.seq);
 });
 
 test("send from an unknown client is rejected", () => {

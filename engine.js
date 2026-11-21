@@ -20,6 +20,25 @@ export const CHECKSUM_WEIGHTS = [3, 5, 7, 11, 13];
 
 export const MESSAGE_KINDS = ["note", "ack", "reply"];
 
+// Sanity bounds for values a client can write into the log. These keep the
+// room protocol sane if the engine is ever driven by a real transport.
+export const MAX_CLIENT_ID_LENGTH = 64;
+export const MAX_LABEL_LENGTH = 64;
+export const MAX_TEXT_LENGTH = 4000;
+
+// Events and every value reachable from them are frozen deep: a replay copy,
+// a lab trace entry, or a client view must never offer a mutable handle into
+// recorded history. Freezing happens at append time, so objects a caller
+// passed in are frozen along with the event that stores them.
+function deepFreeze(value, seen = new Set()) {
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return value;
+  seen.add(value);
+  for (const key of Object.keys(value)) deepFreeze(value[key], seen);
+  Object.freeze(value);
+  return value;
+}
+
 // Mulberry32 seeded generator. Same seed, same stream of numbers.
 export function createRng(seed = 1) {
   let state = seed >>> 0;
@@ -54,7 +73,13 @@ export function generateRoomCode(rng) {
   if (typeof rng !== "function") throw new TypeError("generateRoomCode needs a generator function");
   let base = "";
   for (let i = 0; i < CODE_BASE_LENGTH; i += 1) {
-    base += CODE_ALPHABET[Math.floor(rng() * CODE_ALPHABET.length)];
+    const roll = rng();
+    // A generator that returns an out of range or non numeric roll is clamped
+    // into the alphabet rather than smuggling undefined into the code.
+    const index = Number.isFinite(roll)
+      ? Math.min(Math.max(Math.floor(roll * CODE_ALPHABET.length), 0), CODE_ALPHABET.length - 1)
+      : 0;
+    base += CODE_ALPHABET[index];
   }
   return base + checksumDigit(base);
 }
@@ -64,7 +89,11 @@ export function normalizeRoomCode(input) {
   if (typeof input !== "string") {
     return { ok: false, code: "", reason: "A room code must be a string." };
   }
-  const code = input.trim().toUpperCase().replace(/[\s-]+/g, "");
+  const stripped = input.trim().replace(/[\s-]+/g, "");
+  // Case folding can expand non ASCII input (a ligature becomes two
+  // characters), so fold only plain alphanumerics and let anything else reach
+  // the format and charset checks untouched.
+  const code = /^[A-Za-z0-9]+$/.test(stripped) ? stripped.toUpperCase() : stripped;
   return { ok: true, code };
 }
 
@@ -119,24 +148,38 @@ export class RelayEngine {
     this.log = [];
     this.clients = new Map();
     this.nextSeq = 1;
+    this.sendSeqs = new Set();
   }
 
   #members() {
     return [...this.clients.keys()];
   }
 
+  // The members snapshot on an event is the room roster at append time, and
+  // its exact contents differ per type: join lists the roster before the
+  // joiner enters (the joiner is absent), leave lists the roster before the
+  // leaver exits (the leaver is still present), send lists everyone in the
+  // room, and heartbeat lists just the sender.
   #append(type, fields) {
     const event = { seq: this.nextSeq, type, time: this.time, ...fields };
     this.nextSeq += 1;
-    this.log.push(event);
+    this.log.push(deepFreeze(event));
     return event;
   }
 
   join(clientId, { label, device } = {}) {
     const check = validateRoomCode(this.roomCode);
     if (!check.valid) return { ok: false, reason: "The room code is not valid, so nobody can join." };
-    if (typeof clientId !== "string" || clientId.length === 0) {
+    if (typeof clientId !== "string" || clientId.trim().length === 0) {
       return { ok: false, reason: "A client id is required." };
+    }
+    if (clientId.length > MAX_CLIENT_ID_LENGTH) {
+      return { ok: false, reason: `A client id is at most ${MAX_CLIENT_ID_LENGTH} characters.` };
+    }
+    for (const [name, value] of [["label", label], ["device", device]]) {
+      if (value !== undefined && (typeof value !== "string" || value.length > MAX_LABEL_LENGTH)) {
+        return { ok: false, reason: `A ${name} is a string of at most ${MAX_LABEL_LENGTH} characters.` };
+      }
     }
     if (this.clients.has(clientId)) {
       return { ok: false, reason: `${clientId} is already in the room.` };
@@ -161,7 +204,8 @@ export class RelayEngine {
     }
     const members = this.#members();
     this.clients.delete(clientId);
-    const event = this.#append("leave", { clientId, reason, members });
+    const why = typeof reason === "string" && reason.trim().length > 0 ? reason : "voluntary";
+    const event = this.#append("leave", { clientId, reason: why, members });
     return { ok: true, event };
   }
 
@@ -179,21 +223,35 @@ export class RelayEngine {
     if (typeof text !== "string" || text.trim().length === 0) {
       return { ok: false, reason: "Message text is required." };
     }
+    if (text.length > MAX_TEXT_LENGTH) {
+      return { ok: false, reason: `Message text is at most ${MAX_TEXT_LENGTH} characters.` };
+    }
     if (!MESSAGE_KINDS.includes(kind)) {
       return { ok: false, reason: `Unknown message kind ${String(kind)}.` };
     }
+    if (replyTo !== null && replyTo !== undefined && !this.sendSeqs.has(replyTo)) {
+      return { ok: false, reason: `replyTo must be the sequence of an earlier send, got ${String(replyTo)}.` };
+    }
     client.senderSeq += 1;
+    // Any accepted traffic is a sign of life, so a send refreshes liveness the
+    // same way a heartbeat does.
+    client.lastSeen = this.time;
     const members = this.#members();
     const event = this.#append("send", { clientId, senderSeq: client.senderSeq, text, kind, replyTo, members });
+    this.sendSeqs.add(event.seq);
     return { ok: true, event };
   }
 
   // Eviction sweep: every client silent for more than the ttl is removed
-  // with a leave event carrying reason "stale". Returns the evicted ids.
+  // with a leave event carrying reason "stale". Returns the evicted ids. A
+  // caller supplied instant is never allowed to run ahead of the clock:
+  // events are stamped with engine time, so silence is measured against
+  // engine time too.
   sweep(now = this.time) {
+    const at = Number.isFinite(Number(now)) ? Math.min(Number(now), this.time) : this.time;
     const evicted = [];
     for (const client of [...this.clients.values()]) {
-      const silentFor = now - client.lastSeen;
+      const silentFor = at - client.lastSeen;
       if (silentFor > this.heartbeatTtlMs) {
         const members = this.#members();
         this.clients.delete(client.id);
@@ -205,8 +263,11 @@ export class RelayEngine {
   }
 
   // Advance the virtual clock, then sweep. This is the only way time moves.
+  // Negative or non numeric deltas are clamped to zero so the log's timestamps
+  // stay nondecreasing no matter what a script asks for.
   tick(deltaMs = 0) {
-    this.time += deltaMs;
+    const delta = Number(deltaMs);
+    this.time += Number.isFinite(delta) && delta > 0 ? delta : 0;
     return this.sweep(this.time);
   }
 
@@ -252,6 +313,12 @@ export function runScript(engine, script) {
   let lastReplay = [];
   script.forEach((step, index) => {
     const number = index + 1;
+    if (step === null || step === undefined) {
+      // A missing step must not crash mid run: earlier steps already mutated
+      // the engine, so the rejection belongs in the trace.
+      trace.push({ step: number, op: null, ok: false, reason: "Malformed step: each step must be an object with an op." });
+      return;
+    }
     let result;
     switch (step.op) {
       case "join":
